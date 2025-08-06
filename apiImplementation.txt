@@ -1,0 +1,363 @@
+## **Section 4: A Step-by-Step Implementation Guide: Integrating ImageKit.io**
+
+This section provides a complete, production-ready guide to integrating the ImageKit.io API for the image upload functionality. The approach detailed here is designed to be both easy for a novice to follow and secure enough for a real-world application. It follows the best practice of using a server-side endpoint to generate authentication tokens, ensuring that your private API key is never exposed to the public internet.
+
+### **4.1 Prerequisite: Acquiring Your ImageKit.io API Keys**
+
+Before writing any code, you must create a free ImageKit.io account and retrieve your API credentials.
+
+1. **Sign Up:** Navigate to the ImageKit.io website and sign up for a "Forever Free" account. You will not need a credit card.6  
+2. **Navigate to the Developer Section:** Once your account is created and you are logged into the dashboard, locate the "Developer" section in the navigation menu. Click on "API Keys."  
+3. **Copy Your Credentials:** On the API Keys page, you will find three crucial pieces of information. Copy these into a secure location, as you will need them shortly:  
+   * **Public Key:** A key with the prefix public\_.... This key is safe to use in your client-side code.  
+   * **Private Key:** A key with the prefix private\_.... **This key is secret and must never be exposed in your frontend JavaScript.** It will be used only on your secure backend server.  
+   * **URL-endpoint:** This is the base URL for your ImageKit.io media library (e.g., https://ik.imagekit.io/your\_cloud\_name).
+
+### **4.2 Frontend Foundation: HTML and CSS for the Dossier Card Uploader**
+
+First, create the basic structure and styling for the Dossier card. This HTML includes a placeholder for the image and a file input styled to look like a button.
+
+**index.html**
+
+HTML
+
+\<\!DOCTYPE **html**\>  
+\<html lang\="en"\>  
+\<head\>  
+    \<meta charset\="UTF-8"\>  
+    \<meta name\="viewport" content\="width=device-width, initial-scale=1.0"\>  
+    \<title\>Dossier Image Uploader\</title\>  
+    \<link rel\="stylesheet" href\="style.css"\>  
+\</head\>  
+\<body\>  
+    \<div class\="dossier-card"\>  
+        \<h2\>Dossier Image\</h2\>  
+        \<div class\="image-placeholder-container"\>  
+            \<img id\="dossierImage" src\="https://ik.imagekit.io/remote/tr:w-300,h-300,fo-auto/https://img.icons8.com/ios/452/user-male-circle.png" alt\="Dossier Image Placeholder"\>  
+        \</div\>  
+        \<div class\="upload-container"\>  
+            \<input type\="file" id\="fileUploadInput" accept\="image/png, image/jpeg, image/webp" hidden/\>  
+            \<button id\="uploadButton" type\="button"\>Upload Image\</button\>  
+            \<p id\="statusMessage"\>\</p\>  
+        \</div\>  
+    \</div\>  
+    \<script src\="upload.js"\>\</script\>  
+\</body\>  
+\</html\>
+
+**style.css**
+
+CSS
+
+body {  
+    display: flex;  
+    justify-content: center;  
+    align-items: center;  
+    height: 100vh;  
+    font-family: Arial, sans-serif;  
+    background-color: \#f0f2f5;  
+    margin: 0;  
+}
+
+.dossier-card {  
+    background: \#ffffff;  
+    border-radius: 8px;  
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
+    padding: 24px;  
+    width: 350px;  
+    text-align: center;  
+}
+
+.dossier-card h2 {  
+    margin-bottom: 20px;  
+    color: \#333;  
+}
+
+.image-placeholder-container {  
+    width: 150px;  
+    height: 150px;  
+    border-radius: 50%;  
+    margin: 0 auto 20px auto;  
+    overflow: hidden;  
+    border: 3px solid \#e0e0e0;  
+    display: flex;  
+    justify-content: center;  
+    align-items: center;  
+}
+
+\#dossierImage {  
+    width: 100%;  
+    height: 100%;  
+    object-fit: cover;  
+}
+
+\#uploadButton {  
+    background-color: \#007bff;  
+    color: white;  
+    border: none;  
+    padding: 10px 20px;  
+    border-radius: 5px;  
+    cursor: pointer;  
+    font-size: 16px;  
+    transition: background-color 0.3s;  
+}
+
+\#uploadButton:hover {  
+    background-color: \#0056b3;  
+}
+
+\#statusMessage {  
+    margin-top: 15px;  
+    font-size: 14px;  
+    color: \#666;  
+    height: 20px; /\* Reserve space to prevent layout shifts \*/  
+}
+
+### **4.3 The Secure Upload Workflow: A Production-Ready Approach**
+
+#### **4.3.1 Understanding the "Why": The Necessity of a Server-Side Authentication Endpoint**
+
+A common mistake made by beginners is to place their secret credentials, like the ImageKit Private Key, directly into their client-side JavaScript code. This is extremely dangerous. Anyone who visits the webpage can view the page source and steal the private key. With that key, an attacker could upload malicious content to your account, delete your existing files, or run up massive bills, all at your expense.
+
+The secure and professional approach is to use a trusted backend server as a gatekeeper. The frontend never sees the private key. Instead, when the user wants to upload a file, the frontend asks the backend for permission. The backend, which safely stores the private key, uses it to generate a unique, short-lived set of credentials (a token, an expiry timestamp, and a signature) and sends these back to the frontend. The frontend then uses these temporary credentials to perform the upload directly to ImageKit. This ensures the private key remains secret while still allowing secure client-side uploads.9
+
+#### **4.3.2 Backend Logic: Building a Minimalist Authentication Server (Node.js Example)**
+
+This example uses Node.js and the Express framework to create a simple server with one job: to provide authentication tokens.
+
+1. Setup the Project:  
+   Create a new folder for your server, navigate into it, and run these commands in your terminal:  
+   Bash  
+   npm init \-y  
+   npm install express imagekit cors
+
+   This initializes a Node.js project and installs the necessary packages: express for the web server, imagekit for the official SDK, and cors to allow requests from your frontend.  
+2. **Create the Server File (server.js):**  
+   JavaScript  
+   const express \= require('express');  
+   const ImageKit \= require('imagekit');  
+   const cors \= require('cors');
+
+   const app \= express();  
+   const port \= 3001; // Choose a port for your backend server
+
+   // IMPORTANT: Use environment variables in a real application  
+   // For this example, we are putting them here for simplicity.  
+   const imagekit \= new ImageKit({  
+       publicKey: "YOUR\_PUBLIC\_KEY",      // Replace with your Public Key  
+       privateKey: "YOUR\_PRIVATE\_KEY",    // Replace with your Private Key  
+       urlEndpoint: "YOUR\_URL\_ENDPOINT"   // Replace with your URL-endpoint  
+   });
+
+   // Allow requests from your frontend's origin  
+   app.use(cors({  
+       origin: 'http://localhost:your\_frontend\_port' // Or your live domain  
+   }));
+
+   // The authentication endpoint  
+   app.get('/auth', (req, res) \=\> {  
+       const authenticationParameters \= imagekit.getAuthenticationParameters();  
+       res.json(authenticationParameters);  
+   });
+
+   app.listen(port, () \=\> {  
+       console.log(\`Authentication server listening at http://localhost:${port}\`);  
+   });
+
+   **Note:** Remember to replace the placeholder values with your actual ImageKit credentials. In a real production application, these keys should be stored securely as environment variables, not hard-coded.  
+3. Run the Server:  
+   From your terminal, in the server project directory, run:  
+   Bash  
+   node server.js
+
+   Your authentication server is now running.
+
+#### **4.3.3 Frontend Logic: The Complete Client-Side JavaScript Implementation**
+
+This script will handle the user interaction, communicate with your backend server to get the token, and then perform the upload to ImageKit.
+
+**upload.js**
+
+JavaScript
+
+document.addEventListener('DOMContentLoaded', () \=\> {  
+    const fileUploadInput \= document.getElementById('fileUploadInput');  
+    const uploadButton \= document.getElementById('uploadButton');  
+    const dossierImage \= document.getElementById('dossierImage');  
+    const statusMessage \= document.getElementById('statusMessage');
+
+    // Trigger the hidden file input when the styled button is clicked  
+    uploadButton.addEventListener('click', () \=\> {  
+        fileUploadInput.click();  
+    });
+
+    // Handle the file selection  
+    fileUploadInput.addEventListener('change', async (event) \=\> {  
+        const file \= event.target.files;  
+        if (\!file) {  
+            return; // No file selected  
+        }
+
+        // Check file size (ImageKit free plan has a 25MB limit)  
+        if (file.size \> 25 \* 1024 \* 1024) {  
+            statusMessage.textContent \= 'Error: File size exceeds 25 MB.';  
+            statusMessage.style.color \= 'red';  
+            return;  
+        }
+
+        statusMessage.textContent \= 'Uploading...';  
+        statusMessage.style.color \= '\#666';
+
+        try {  
+            // Step 1: Get authentication parameters from your backend server  
+            const authResponse \= await fetch('http://localhost:3001/auth');  
+            if (\!authResponse.ok) {  
+                throw new Error(\`Authentication failed with status: ${authResponse.status}\`);  
+            }  
+            const { token, expire, signature } \= await authResponse.json();
+
+            // Step 2: Prepare form data for ImageKit upload  
+            const formData \= new FormData();  
+            formData.append('file', file);  
+            formData.append('fileName', file.name);  
+            formData.append('publicKey', 'YOUR\_PUBLIC\_KEY'); // Replace with your Public Key  
+            formData.append('signature', signature);  
+            formData.append('expire', expire);  
+            formData.append('token', token);
+
+            // Step 3: Upload the file to ImageKit  
+            const uploadResponse \= await fetch('https://upload.imagekit.io/api/v1/files/upload', {  
+                method: 'POST',  
+                body: formData,  
+            });
+
+            if (\!uploadResponse.ok) {  
+                const errorResult \= await uploadResponse.json();  
+                throw new Error(\`Upload failed: ${errorResult.message |
+
+| 'Unknown error'}\`);  
+            }
+
+            const result \= await uploadResponse.json();
+
+            // Step 4: Update the image placeholder with the new image URL  
+            dossierImage.src \= result.url;  
+            statusMessage.textContent \= 'Upload successful\!';  
+            statusMessage.style.color \= 'green';
+
+        } catch (error) {  
+            console.error('Upload process failed:', error);  
+            statusMessage.textContent \= \`Error: ${error.message}\`;  
+            statusMessage.style.color \= 'red';  
+        } finally {  
+            // Reset the file input so the user can upload the same file again if needed  
+            fileUploadInput.value \= '';  
+        }  
+    });  
+});
+
+**Note:** Remember to replace YOUR\_PUBLIC\_KEY in the frontend code with your actual ImageKit Public Key.
+
+### **4.4 Code Dissection: A Detailed Explanation of the Upload Script**
+
+* **document.addEventListener('DOMContentLoaded',...):** This ensures the script only runs after the entire HTML document has been loaded and parsed, preventing errors from trying to access elements that don't exist yet.  
+* **Element Selection:** The script begins by getting references to the key HTML elements: the hidden file input, the visible button, the image tag, and the status message paragraph.  
+* **Button Click Event:** Clicking the styled uploadButton programmatically triggers a click on the fileUploadInput, which is hidden. This is a common technique for creating custom-styled file upload buttons.  
+* **File Input change Event:** This is the core of the functionality. It fires when the user selects a file.  
+  * const file \= event.target.files;: This retrieves the first file selected by the user.  
+  * **File Validation:** A simple check is performed to ensure the file size is within the 25 MB limit of ImageKit's free plan.6 This client-side check provides immediate feedback to the user without waiting for a server response.  
+* **try...catch...finally block:** This is a robust way to handle asynchronous operations and potential errors.  
+  * **try block:** Contains the "happy path" logic for the upload.  
+    1. **Fetch Authentication Token:** An async/await call is made to the backend server's /auth endpoint. await pauses the function until the fetch promise resolves, making the asynchronous code read like synchronous code. The JSON response containing the token, expire, and signature is destructured into constants.  
+    2. **Create FormData:** A FormData object is instantiated. This is the standard way to prepare data, especially files, for sending in a POST request. The file itself, its name, the public API key, and the authentication parameters from the backend are all appended to this object.  
+    3. **Upload to ImageKit:** Another fetch call is made, this time to the ImageKit upload endpoint. The method is set to POST, and the body is our FormData object.  
+    4. **Process Response:** If the upload is successful (the response is ok), the JSON response from ImageKit is parsed. This response contains details about the uploaded file, including its public url.9  
+    5. **Update UI:** The src attribute of the dossierImage is updated with the new URL, displaying the uploaded image to the user. A success message is shown.  
+  * **catch (error) block:** If any part of the try block fails (e.g., the auth server is down, the upload is rejected), the code execution jumps to this block. The error is logged to the console for debugging, and a user-friendly error message is displayed on the page.  
+  * **finally block:** This block runs regardless of whether the try block succeeded or failed. fileUploadInput.value \= ''; is important because it clears the file input. Without this, a user would not be able to select and re-upload the same file twice in a row, as the change event would not fire.
+
+## **Section 5: Best Practices and Next Steps**
+
+The implementation provided in Section 4 creates a functional and secure image uploader. However, to elevate it to a truly professional standard, several enhancements related to error handling, user experience, and feature utilization should be considered.
+
+### **5.1 Implementing Robust Error Handling**
+
+The current script includes a basic try...catch block. This can be made more robust by inspecting the specific error responses from the API. ImageKit, like other professional APIs, uses standard HTTP status codes to indicate the nature of a request's outcome.14 For example:
+
+* A 400 status code indicates a "Bad Request," which could mean a required parameter was missing.  
+* A 401 status code means "Authorization Required," suggesting a problem with the API key or signature.  
+* A 413 status code indicates "Request Entity Too Large", which can happen if a file exceeds the allowed size limit.14
+
+The JavaScript can be improved to check uploadResponse.status and provide more specific feedback to the user. For instance, if the status is 413, the message could be "Error: File is too large," rather than a generic "Upload failed." This level of detail greatly aids both the user and the developer in diagnosing problems.
+
+### **5.2 Enhancing User Experience with Progress Indicators and Feedback**
+
+For uploads that may take several seconds, especially on slower connections, the current "Uploading..." message provides minimal feedback. The user interface should not appear frozen or unresponsive. A significant improvement is to provide a visual progress indicator.
+
+While the modern fetch API, used in the example, does not natively support tracking upload progress, the older XMLHttpRequest (XHR) object does. It is possible to refactor the upload logic to use XHR and listen to its progress event. This event provides the loaded (bytes transferred) and total (total bytes) properties, which can be used to calculate a percentage and update a visual progress bar in the UI.45 This gives the user clear, real-time feedback on the status of their upload, dramatically improving the user experience. Alternatively, for a simpler enhancement, a loading spinner could be displayed when the upload starts and hidden upon completion or failure.
+
+### **5.3 Introduction to On-the-Fly URL-Based Transformations**
+
+One of the most powerful features offered by platforms like ImageKit.io and Cloudinary is the ability to perform real-time image transformations simply by modifying the image URL.26 The application only needs to store one high-resolution original image. From that single source, an infinite number of variations can be generated on demand.
+
+For example, after a successful upload, the application receives a base URL like:  
+https://ik.imagekit.io/your\_cloud\_name/your\_image.jpg  
+To display a 200x200 pixel square thumbnail, instead of creating and storing a separate thumbnail file, one can simply request the following URL:  
+https://ik.imagekit.io/your\_cloud\_name/your\_image.jpg?tr=w-200,h-200,c-force  
+The tr parameter signals a transformation. Here, w-200 sets the width, h-200 sets the height, and c-force forces the cropping to those exact dimensions. ImageKit will generate this specific version on the first request, cache it on its CDN, and deliver it instantly on all subsequent requests. This technique is incredibly efficient, saving storage space, reducing processing overhead, and giving developers immense flexibility to adapt images for any context within the application. Exploring and integrating these URL-based transformations is a logical next step in leveraging the full power of the chosen API.
+
+## **Conclusion: A Robust and Scalable Foundation for Your Application**
+
+The journey from a simple request for a "free image upload API" to a fully implemented, secure, and reliable feature reveals the critical importance of thoughtful architectural decisions. The initial analysis demonstrated that the landscape of "free" services is fraught with hidden costs, risks, and complexities. Services like ImgBB, with its API paywall, and Imgur, with its volatile data retention policies, were shown to be unsuitable for professional use despite their surface-level appeal.
+
+The selection of ImageKit.io was the result of a rigorous evaluation against criteria that prioritize developer experience, transparent and predictable scaling, and, most importantly, the long-term integrity of user data. Its straightforward, non-credit-based free tier, clear documentation, and commitment to a secure development model make it an ideal choice for a novice developer building a serious application. By choosing a platform whose business model aligns with the need for data permanence, the project is insulated from the risks of data loss that plague consumer-focused hosting sites.
+
+By following the detailed implementation guide, which emphasizes a secure, server-side authentication workflow, the resulting feature is not merely a quick fix but a robust and professional solution. This approach prevents common security vulnerabilities and establishes a pattern that can be confidently built upon. The final implementation, coupled with the outlined best practices for error handling, user experience enhancements, and on-the-fly transformations, provides more than just a solution to the immediate problem. It provides a scalable and powerful foundation for all future media management needs within the Agency software, empowering the developer to build with confidence and deliver a high-quality experience to their users.
+
+#### **Works cited**
+
+1. Top Image Hosting Sites and How To Choose the Best One for You \- Shopify, accessed August 5, 2025, [https://www.shopify.com/blog/image-hosting-sites](https://www.shopify.com/blog/image-hosting-sites)  
+2. 7 Best Image Hosting Platforms to use In 2022 for your next project \- DEV Community, accessed August 5, 2025, [https://dev.to/judis07/7-best-image-hosting-platforms-to-use-in-2022-for-your-next-project-43o0](https://dev.to/judis07/7-best-image-hosting-platforms-to-use-in-2022-for-your-next-project-43o0)  
+3. Pricing and Plans \- Cloudinary, accessed August 5, 2025, [https://cloudinary.com/pricing](https://cloudinary.com/pricing)  
+4. Signup Start Plan \- Filestack, accessed August 5, 2025, [https://www.filestack.com/signup-start/](https://www.filestack.com/signup-start/)  
+5. Free Image Hosting for .NET Projects | by Roko Kovač \- Medium, accessed August 5, 2025, [https://medium.com/@kova98/free-image-hosting-for-net-6-projects-d166d8767150](https://medium.com/@kova98/free-image-hosting-for-net-6-projects-d166d8767150)  
+6. Pricing plans | ImageKit.io, accessed August 5, 2025, [https://imagekit.io/plans/](https://imagekit.io/plans/)  
+7. API — ImgBB, accessed August 5, 2025, [https://api.imgbb.com/](https://api.imgbb.com/)  
+8. ImgBB — Upload Image — Free Image Hosting, accessed August 5, 2025, [https://imgbb.com/](https://imgbb.com/)  
+9. Upload File \- ImageKit, accessed August 5, 2025, [https://imagekit.io/docs/api-reference/upload-file/upload-file](https://imagekit.io/docs/api-reference/upload-file/upload-file)  
+10. Image Upload API \- Fast & Secure Media Upload for Apps \- API.market, accessed August 5, 2025, [https://api.market/store/magicapi/image-upload](https://api.market/store/magicapi/image-upload)  
+11. 1- How to upload Images to Imgur using Imgur API using Ruby on Rails. \- Medium, accessed August 5, 2025, [https://medium.com/@m7madmagdy/how-to-upload-image-to-imgur-using-imgur-api-using-ruby-on-rails-eb3c964ae2b5](https://medium.com/@m7madmagdy/how-to-upload-image-to-imgur-using-imgur-api-using-ruby-on-rails-eb3c964ae2b5)  
+12. Flexible Pricing for Your File Management Needs \- Filestack, accessed August 5, 2025, [https://www.filestack.com/pricing/](https://www.filestack.com/pricing/)  
+13. Imgur API, accessed August 5, 2025, [https://apidocs.imgur.com/](https://apidocs.imgur.com/)  
+14. Upload API Reference | Documentation \- Cloudinary, accessed August 5, 2025, [https://cloudinary.com/documentation/image\_upload\_api\_reference](https://cloudinary.com/documentation/image_upload_api_reference)  
+15. Documentation \- Filestack, accessed August 5, 2025, [https://www.filestack.com/docs/](https://www.filestack.com/docs/)  
+16. Filestack: The Best File Uploader & Upload API, accessed August 5, 2025, [https://www.filestack.com/](https://www.filestack.com/)  
+17. Filestack Docs | Empower Your Apps with Powerful SDKs, accessed August 5, 2025, [https://www.filestack.com/docs/api/sdks/](https://www.filestack.com/docs/api/sdks/)  
+18. imgur \- HedgeDoc 2 Docs, accessed August 5, 2025, [https://docs.hedgedoc.dev/references/config/media/imgur/](https://docs.hedgedoc.dev/references/config/media/imgur/)  
+19. All Non-Account Imgur Images will be Deleted by May 15 2023, accessed August 5, 2025, [https://forum.puppylinux.com/viewtopic.php?t=8607](https://forum.puppylinux.com/viewtopic.php?t=8607)  
+20. Imgur has announced that they will be "removing old, unused, and inactive content that is not tied to a user account from our platform." This means that a \*huge\* number of images linked from reddit will become dead links. : r/TheoryOfReddit, accessed August 5, 2025, [https://www.reddit.com/r/TheoryOfReddit/comments/12tinfp/imgur\_has\_announced\_that\_they\_will\_be\_removing/](https://www.reddit.com/r/TheoryOfReddit/comments/12tinfp/imgur_has_announced_that_they_will_be_removing/)  
+21. How long does Imgur store uploaded images? \- Web Applications Stack Exchange, accessed August 5, 2025, [https://webapps.stackexchange.com/questions/75993/how-long-does-imgur-store-uploaded-images](https://webapps.stackexchange.com/questions/75993/how-long-does-imgur-store-uploaded-images)  
+22. Image-Hosting Site IMGUR Plans On Deleting A Bunch Of Old Photos. Here's Why That Could Make DIY Wrenching More Difficult \- The Autopian, accessed August 5, 2025, [https://www.theautopian.com/imgur-deleting-old-photos/](https://www.theautopian.com/imgur-deleting-old-photos/)  
+23. Pricing Plan Parameters \- ImageKit, accessed August 5, 2025, [https://imagekit.io/docs/how-pricing-works](https://imagekit.io/docs/how-pricing-works)  
+24. Cloudinary alternative | Feature, integration & price comparison | ImageKit.io, accessed August 5, 2025, [https://imagekit.io/cloudinary-alternative/](https://imagekit.io/cloudinary-alternative/)  
+25. API | Uploadcare, accessed August 5, 2025, [https://uploadcare.com/api/](https://uploadcare.com/api/)  
+26. Image and Video API \+ AI-powered DAM | ImageKit.io, accessed August 5, 2025, [https://imagekit.io/](https://imagekit.io/)  
+27. How to Use ImgBB for Free Image Hosting | Complete Guide \- Clipping World, accessed August 5, 2025, [https://www.clippingworld.com/imgbb/](https://www.clippingworld.com/imgbb/)  
+28. ImgBB Alternatives \- PickPlugins, accessed August 5, 2025, [https://pickplugins.com/imgbb-alternatives/](https://pickplugins.com/imgbb-alternatives/)  
+29. ImgBB — Upload Image — Free Image Hosting 4 | PDF \- Scribd, accessed August 5, 2025, [https://www.scribd.com/document/841486539/ImgBB-Upload-Image-Free-Image-Hosting-4](https://www.scribd.com/document/841486539/ImgBB-Upload-Image-Free-Image-Hosting-4)  
+30. karjok/IMGBB: https://imgbb.com image uploader \- GitHub, accessed August 5, 2025, [https://github.com/karjok/IMGBB](https://github.com/karjok/IMGBB)  
+31. How To Use the Imgur API \- RapidAPI, accessed August 5, 2025, [https://rapidapi.com/blog/imgur-api-tutorial/](https://rapidapi.com/blog/imgur-api-tutorial/)  
+32. Imgur API Postman Collection \- GitHub Gist, accessed August 5, 2025, [https://gist.github.com/dvdsgl/743e8821f1566948068e966e32adc224](https://gist.github.com/dvdsgl/743e8821f1566948068e966e32adc224)  
+33. Signup Start Plan (Edtech) \- Filestack, accessed August 5, 2025, [https://www.filestack.com/signup-start-edtech/](https://www.filestack.com/signup-start-edtech/)  
+34. Filestack Service Terms \- Idera, Inc., accessed August 5, 2025, [https://www.ideracorp.com/\~/media/IderaInc/Files/Filestack/Filestack%20Service%20Terms](https://www.ideracorp.com/~/media/IderaInc/Files/Filestack/Filestack%20Service%20Terms)  
+35. Image API | Cloudinary, accessed August 5, 2025, [https://cloudinary.com/image-api](https://cloudinary.com/image-api)  
+36. Image and Video Upload, Storage, Optimization and CDN, accessed August 5, 2025, [https://cloudinary.com/](https://cloudinary.com/)  
+37. Transformation URL API Reference | Documentation \- Cloudinary, accessed August 5, 2025, [https://cloudinary.com/documentation/transformation\_reference](https://cloudinary.com/documentation/transformation_reference)  
+38. How does Cloudinary keep my privacy and what information is stored?, accessed August 5, 2025, [https://support.cloudinary.com/hc/en-us/articles/360017940939-How-does-Cloudinary-keep-my-privacy-and-what-information-is-stored](https://support.cloudinary.com/hc/en-us/articles/360017940939-How-does-Cloudinary-keep-my-privacy-and-what-information-is-stored)  
+39. Cloudinary Terms of Use, accessed August 5, 2025, [https://cloudinary.com/tou](https://cloudinary.com/tou)  
+40. Free Image Hosting \- Easily share public links \- ImageKit, accessed August 5, 2025, [https://imagekit.io/tools/free-image-hosting/](https://imagekit.io/tools/free-image-hosting/)  
+41. API reference \- ImageKit, accessed August 5, 2025, [https://imagekit.io/docs/api-reference](https://imagekit.io/docs/api-reference)  
+42. Terms of Use | ImageKit.io, accessed August 5, 2025, [https://imagekit.io/terms/](https://imagekit.io/terms/)  
+43. ImgBB action released for Dropzone 4, accessed August 5, 2025, [https://aptonic.com/blog/imgbb-action-released-for-dropzone-4](https://aptonic.com/blog/imgbb-action-released-for-dropzone-4)  
+44. Programmatically Uploading Images, Videos, and Other Files | Documentation \- Cloudinary, accessed August 5, 2025, [https://cloudinary.com/documentation/upload\_images](https://cloudinary.com/documentation/upload_images)  
+45. How to upload files using JavaScript | Uploadcare, accessed August 5, 2025, [https://uploadcare.com/blog/how-to-upload-files-using-js/](https://uploadcare.com/blog/how-to-upload-files-using-js/)
