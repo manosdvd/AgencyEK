@@ -4,6 +4,8 @@
         import { getFirestore, collection, doc, addDoc, getDoc, setDoc, deleteDoc, onSnapshot, query, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
+        // import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
         // --- CONFIGURATION ---
         const firebaseConfig = {
             apiKey: "AIzaSyC55F9Wj8b_XL4iKDzPZvcuEAp4eGATTqg",
@@ -14,17 +16,18 @@
             appId: "1:472296401171:web:20bc78c351f9e949dc12e6"
         };
         
-        const imageKitConfig = {
-            publicKey: "public_rJ83Er/Hs9uSD4BdDxH+wZ9n9m8=",
-            urlEndpoint: "https://ik.imagekit.io/5r07rjszs",
-            authenticationEndpoint: "http://localhost:3001/auth" 
-        };
+        // const imageKitConfig = {
+        //     publicKey: "public_rJ83Er/Hs9uSD4BdDxH+wZ9n9m8=",
+        //     urlEndpoint: "https://ik.imagekit.io/5r07rjszs",
+        //     authenticationEndpoint: "http://localhost:3001/auth" 
+        // };
 
         // --- INITIALIZE SERVICES ---
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
-        const imagekit = new ImageKit(imageKitConfig);
+        // const storage = getStorage(app);
+        // const imagekit = new ImageKit(imageKitConfig);
 
         // --- APPLICATION STATE ---
         let currentView = 'world'; // 'world' or 'case'
@@ -32,6 +35,8 @@
         let currentDocId = null;
         let dataCache = {}; // Cache for all collection data
         const listeners = {}; // To hold our snapshot listeners
+        let cropper = null;
+        let imageUploadContext = null; // To remember which uploader was clicked
         
         const NAV_CONFIG = {
             world: [
@@ -57,10 +62,16 @@
         const newAssetBtnText = document.getElementById('new-asset-btn-text');
         const topNavTabs = document.getElementById('top-nav-tabs');
         const leftNavBar = document.getElementById('left-nav-bar');
-        const focusToggleBtn = document.getElementById('focus-toggle-btn');
         const modal = document.getElementById('confirmation-modal');
         const modalConfirmBtn = document.getElementById('modal-confirm-btn');
         const modalCancelBtn = document.getElementById('modal-cancel-btn');
+        const hamburgerBtn = document.getElementById('hamburger-btn');
+        const mobileDrawer = document.getElementById('mobile-drawer');
+        const mobileNavContent = document.getElementById('mobile-nav-content');
+        const cropperModal = document.getElementById('cropper-modal');
+        const cropperImage = document.getElementById('cropper-image');
+        const cropConfirmBtn = document.getElementById('crop-confirm-btn');
+        const modalCropCancelBtn = document.getElementById('modal-crop-cancel-btn');
 
         // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -91,7 +102,23 @@
             });
 
             newAssetBtn.addEventListener('click', handleNewAsset);
-            focusToggleBtn.addEventListener('click', () => mainLayout.classList.toggle('focus-mode'));
+
+            hamburgerBtn.addEventListener('click', toggleMobileDrawer);
+            mobileDrawer.addEventListener('click', (e) => {
+                if (e.target === mobileDrawer) {
+                    toggleMobileDrawer(); // Close drawer if clicking on the overlay
+                }
+            });
+
+            // Add new listeners for the cropper
+            cropConfirmBtn.addEventListener('click', handleCrop);
+            modalCropCancelBtn.addEventListener('click', cancelCrop);
+            cropperModal.addEventListener('click', (e) => {
+                // Also allow closing by clicking the overlay
+                if (e.target === cropperModal) {
+                    cancelCrop();
+                }
+            });
         });
 
         function initializeAndListenToAllCollections() {
@@ -129,6 +156,80 @@
             switchTopView('world'); // Start with the world builder view
         }
         
+        // --- MOBILE DRAWER LOGIC ---
+        function toggleMobileDrawer() {
+            mobileDrawer.classList.toggle('open');
+            document.body.classList.toggle('overflow-hidden'); // Prevent scrolling when drawer is open
+            if (mobileDrawer.classList.contains('open')) {
+                renderMobileNav();
+            }
+        }
+
+        function renderMobileNav() {
+            mobileNavContent.innerHTML = ''; // Clear previous content
+
+            // 1. Add View Toggles (World/Case)
+            mobileNavContent.innerHTML += `
+                <div class="flex border-b-2 border-[var(--border-color)] mb-4">
+                    <button data-view="world" class="mobile-view-btn ${currentView === 'world' ? 'active' : ''}">World</button>
+                    <button data-view="case" class="mobile-view-btn ${currentView === 'case' ? 'active' : ''}">Case</button>
+                </div>
+            `;
+
+            // 2. Add Navigation Icons for the current view
+            const navItemsHTML = NAV_CONFIG[currentView].map(item => `
+                <button data-collection="${item.id}" class="mobile-nav-item ${currentCollection === item.id ? 'active' : ''}">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
+                    <span>${item.name}</span>
+                </button>
+            `).join('');
+            mobileNavContent.innerHTML += `<div class="space-y-2 mb-4">${navItemsHTML}</div>`;
+
+            // 3. Add Asset List for the current collection
+            const assets = dataCache[currentCollection] || [];
+            const isSingleton = currentCollection === 'sleuth' || currentCollection === 'case_meta';
+            
+            if (!isSingleton) {
+                const assetListHTML = assets.map(asset => {
+                    const assetName = asset.name || asset.fullName || asset.district || 'Untitled';
+                    return `<a href="#" data-asset-id="${asset.id}" class="mobile-asset-link ${asset.id === currentDocId ? 'active' : ''}">${assetName}</a>`;
+                }).join('');
+                 mobileNavContent.innerHTML += `<h3 class="font-poiret gold-text text-xl mt-4 border-t border-[var(--border-color)] pt-2">Assets</h3><div class="mobile-asset-list">${assetListHTML}</div>`;
+            }
+            
+            // Add event listeners for the new mobile buttons
+            attachMobileNavListeners();
+        }
+
+        function attachMobileNavListeners() {
+            mobileNavContent.querySelectorAll('.mobile-view-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    switchTopView(e.target.dataset.view);
+                    renderMobileNav(); // Re-render the nav for the new view
+                });
+            });
+
+            mobileNavContent.querySelectorAll('.mobile-nav-item').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const collection = e.currentTarget.dataset.collection;
+                    switchAssetType(collection);
+                    renderMobileNav(); // Re-render to update active state
+                });
+            });
+
+            mobileNavContent.querySelectorAll('.mobile-asset-link').forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const assetId = e.currentTarget.dataset.assetId;
+                    const asset = dataCache[currentCollection].find(a => a.id === assetId);
+                    if (asset) {
+                        displayAssetForm(currentCollection, asset);
+                        toggleMobileDrawer(); // Close drawer after selection
+                    }
+                });
+            });
+        }
+
         // --- VIEW SWITCHING LOGIC ---
         function switchTopView(view) {
             currentView = view;
@@ -504,13 +605,20 @@
         }
 
         function generateMultiSelectField(name, label, optionsHTML, selectedIds = [], collection, nameKey, tooltip = '') {
+            let singularLabel = label;
+            if (label.endsWith('ies')) {
+                singularLabel = label.slice(0, -3) + 'y'; // Converts 'Allies' to 'Ally'
+            } else if (label.endsWith('s')) {
+                singularLabel = label.slice(0, -1); // Converts 'Items' to 'Item'
+            }
+
             return `
                 <div class="tooltip-container">
                     <label class="form-label">${label}</label>
                     <div class="multi-select-container" data-name="${name}" data-collection="${collection}" data-name-key="${nameKey}">
                         <div class="selected-items"></div>
                         <select class="form-select">
-                            <option value="">-- Add ${label.slice(0,-1)} --</option>
+                            <option value="">-- Add ${singularLabel} --</option>
                             ${optionsHTML}
                         </select>
                     </div>
@@ -963,38 +1071,29 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            const uploaderContainer = event.target.closest('.space-y-2');
-            const statusDiv = uploaderContainer.querySelector('.upload-status');
-            const hiddenInput = uploaderContainer.querySelector('input[type="hidden"]');
-            const previewImg = uploaderContainer.querySelector('img');
+            // Save the context: which uploader was triggered
+            imageUploadContext = event.target;
 
-            statusDiv.textContent = 'Uploading...';
-            statusDiv.style.color = 'var(--gold-accent)';
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                // Show the modal and set the image source
+                cropperModal.classList.add('visible');
+                cropperImage.src = e.target.result;
 
-            try {
-                const authResponse = await fetch('http://localhost:3001/auth');
-                if (!authResponse.ok) {
-                    throw new Error(`Authentication failed with status: ${authResponse.status}`);
-                }
-                const authParams = await authResponse.json();
-
-                const result = await imagekit.upload({
-                    file: file,
-                    fileName: file.name,
-                    ...authParams
+                // Initialize Cropper.js
+                cropper = new Cropper(cropperImage, {
+                    aspectRatio: 4 / 3,
+                    viewMode: 1, // Restrict crop box to the canvas
+                    background: false,
+                    responsive: true,
+                    restore: false,
+                    autoCropArea: 0.8,
                 });
-                
-                statusDiv.textContent = 'Upload successful!';
-                statusDiv.style.color = 'green';
-                hiddenInput.value = result.url;
-                previewImg.src = result.url;
-                setTimeout(() => statusDiv.textContent = '', 3000);
+            };
+            reader.readAsDataURL(file);
 
-            } catch (error) {
-                console.error('ImageKit Upload Error:', error);
-                statusDiv.textContent = `Upload failed.`;
-                statusDiv.style.color = 'red';
-            }
+            // Clear the input value so the 'change' event fires even if the same file is selected again
+            event.target.value = '';
         }
         
         function showConfirmationModal(id, name) {
@@ -1007,7 +1106,7 @@
                     await deleteDoc(doc(db, currentCollection, id));
                     showNotification(`"${name}" was deleted.`, 'success');
                     if (id === currentDocId) {
-                        mainContent.innerHTML = `<div class="h-full flex items-center justify-center"><div class="text-center text-gray-500"><p>Select an item from the left panel or create a new one.</p></div></div>`;
+                        mainContent.innerHTML = `<div class="h-full flex items-center justify-center"><div class="text-center text-black"><p>Select an item from the left panel or create a new one.</p></div></div>`;
                         currentDocId = null;
                     }
                 } catch (error) {
@@ -1019,6 +1118,75 @@
             modalCancelBtn.onclick = () => {
                 modal.classList.remove('visible');
             };
+        }
+        
+        // Add these two new functions to your script.js file
+
+        function cancelCrop() {
+            cropperModal.classList.remove('visible');
+            if (cropper) {
+                cropper.destroy(); // Important: clean up the cropper instance
+            }
+            cropper = null;
+            imageUploadContext = null;
+        }
+
+        async function handleCrop() {
+            if (!cropper || !imageUploadContext) return;
+
+            // Get the uploader's related elements from the saved context
+            const uploaderContainer = imageUploadContext.closest('.space-y-2');
+            const statusDiv = uploaderContainer.querySelector('.upload-status');
+            const hiddenInput = uploaderContainer.querySelector('input[type="hidden"]');
+            const previewImg = uploaderContainer.querySelector('img');
+
+            statusDiv.textContent = 'Cropping & Compressing...';
+            statusDiv.style.color = 'var(--gold-accent)';
+
+            // Get the cropped image data as a Blob
+            cropper.getCroppedCanvas().toBlob(async (blob) => {
+                if (!blob) {
+                    statusDiv.textContent = 'Error: Cropping failed.';
+                    statusDiv.style.color = 'red';
+                    cancelCrop();
+                    return;
+                }
+
+                // --- Compression Options ---
+                const options = {
+                    maxSizeMB: 0.7,
+                    maxWidthOrHeight: 1280,
+                    useWebWorker: true,
+                    // Pass the blob through to the compressor
+                    fileType: blob.type,
+                };
+
+                try {
+                    // 1. Compress the cropped blob
+                    const compressedBlob = await imageCompression(blob, options);
+                    console.log(`Cropped & Compressed size: ${(compressedBlob.size / 1024).toFixed(2)} KB`);
+
+                    // 2. Convert the final blob to Base64 to display and save
+                    const reader = new FileReader();
+                    reader.onloadend = function() {
+                        const base64data = reader.result;
+                        previewImg.src = base64data;
+                        hiddenInput.value = base64data;
+                        statusDiv.textContent = 'Ready to save.';
+                        statusDiv.style.color = 'green';
+                    };
+                    reader.readAsDataURL(compressedBlob);
+
+                } catch (error) {
+                    console.error('Image compression error:', error);
+                    statusDiv.textContent = `Error: ${error.message}`;
+                    statusDiv.style.color = 'red';
+                } finally {
+                    // Hide the modal and clean up
+                    cancelCrop();
+                    setTimeout(() => statusDiv.textContent = '', 4000);
+                }
+            });
         }
         
         function showNotification(message, type = 'success') {
